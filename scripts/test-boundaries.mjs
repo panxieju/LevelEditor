@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import { createScene, addGroundBoundaries } from '../src/level.js';
+const ground = { id: 'ground', type: 'ground', x: 3, z: 3, layer: 0 };
+let scene = { ...createScene(), entities: [ground] };
+let next = addGroundBoundaries(scene);
+assert.equal(next.entities.filter(e => e.type === 'boundary').length, 8);
+assert.deepEqual(addGroundBoundaries(next), next);
+scene.entities.push({ id: 'box', type: 'box1x1', x: 2, z: 3, layer: 0 });
+scene.entities.push({ id: 'goal', type: 'target', x: 4, z: 3, layer: 0 });
+next = addGroundBoundaries(scene);
+assert.equal(next.entities.filter(e => e.type === 'boundary').length, 6);
+assert.equal(next.entities.find(e => e.id === 'goal').type, 'target');
+assert.equal(addGroundBoundaries({ ...createScene(), entities: [{ ...ground, layer: 1 }]}).entities.length, 1);
+assert.equal(addGroundBoundaries({ ...createScene(), entities: [{ ...ground, x: 0, z: 0 }]}).entities.length, 4);
+console.log('Boundary checks passed: perimeter, corners, occupied cells, first layer, edges and repeated clicks.');

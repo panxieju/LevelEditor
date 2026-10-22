@@ -1,0 +1,80 @@
+// Execute this method body with Unity MCP execute_code to refresh editor art.
+var output = System.IO.Path.GetFullPath(System.IO.Path.Combine(Application.dataPath, "../../PuppetGoLevelEditor/public/unity"));
+System.IO.Directory.CreateDirectory(output);
+var mapping = new System.Collections.Generic.Dictionary<string,string> {
+ {"ground","Entities/Ground"},{"box1x1","BrightGrove/Crate"},{"box2x1x2","BrightGrove/CrateWide"},
+ {"glass","Entities/GlassBox"},{"laser1x1x1","Entities/CubeLaser"},{"laser2x1x1","Entities/Laser"},{"laser2x1x2","Entities/Laser2"},
+ {"player","Characters/Girl"},{"soldier","Characters/Soldier"},{"target","Entities/Target"},{"trigger","Entities/Trigger"},
+ {"laserTrigger","Entities/LaserTrigger"},{"portal","Entities/Portal"},{"door","Entities/Door"},{"spring","Entities/SpringBox"},
+ {"slider1x1x3","Entities/Slider1x1x3"},{"slider2x1x3","Entities/Slider2x1x3"},{"boundary","Entities/Edge"}
+};
+var exported = new System.Collections.Generic.List<string>();
+var shaders = new System.Collections.Generic.HashSet<string>();
+var textureNames = new System.Collections.Generic.Dictionary<int,string>();
+foreach (var entry in mapping) {
+ var prefab=AssetDatabase.LoadAssetAtPath<GameObject>("Assets/Resources/Prefabs/"+entry.Value+".prefab");
+ if (prefab==null) continue;
+ var instance=(GameObject)PrefabUtility.InstantiatePrefab(prefab);
+ instance.hideFlags=HideFlags.HideAndDontSave;
+ instance.transform.position=Vector3.zero;
+ // Humanoid's evaluated pose can face opposite to the FBX bind pose (Girl).
+ // Bake the same Idle pose seen in gameplay, even while the export is offscreen.
+ foreach(var animator in instance.GetComponentsInChildren<Animator>(true)) {
+  animator.enabled=true;animator.cullingMode=AnimatorCullingMode.AlwaysAnimate;animator.applyRootMotion=false;
+  animator.Rebind();
+  if(animator.HasState(0,Animator.StringToHash("Base Layer.Idle"))) animator.Play("Base Layer.Idle",0,0f);
+  animator.Update(.001f);
+ }
+ var parts=new System.Collections.Generic.List<object>();
+ try {
+ foreach(var renderer in instance.GetComponentsInChildren<Renderer>(true)) {
+  if (!renderer.enabled || !renderer.gameObject.activeInHierarchy) continue;
+  Mesh mesh=null; bool baked=false;
+  var skinned=renderer as SkinnedMeshRenderer;
+  if(skinned!=null){mesh=new Mesh();skinned.BakeMesh(mesh);baked=true;}
+  else {var filter=renderer.GetComponent<MeshFilter>(); if(filter!=null) mesh=filter.sharedMesh;}
+  if(mesh==null) continue;
+  var matrix=renderer.transform.localToWorldMatrix;
+  var normalMatrix=matrix.inverse.transpose;
+  var vertices=mesh.vertices.Select(v=>{var p=matrix.MultiplyPoint3x4(v); return new[]{-p.x,p.y,p.z};}).SelectMany(v=>v).ToArray();
+  var normals=mesh.normals.Select(v=>{var n=normalMatrix.MultiplyVector(v).normalized; return new[]{-n.x,n.y,n.z};}).SelectMany(v=>v).ToArray();
+  var uv=mesh.uv.Select(v=>new[]{v.x,v.y}).SelectMany(v=>v).ToArray();
+  for(int sub=0;sub<mesh.subMeshCount;sub++) {
+   if(mesh.GetTopology(sub)!=MeshTopology.Triangles) continue;
+   var indices=mesh.GetTriangles(sub); for(int i=0;i<indices.Length;i+=3){var tmp=indices[i+1];indices[i+1]=indices[i+2];indices[i+2]=tmp;}
+   var mats=renderer.sharedMaterials;
+   Material mat=mats.Length==0?null:mats[Math.Min(sub,mats.Length-1)];
+   var floats=new System.Collections.Generic.Dictionary<string,float>();
+   var colors=new System.Collections.Generic.Dictionary<string,float[]>();
+   var textures=new System.Collections.Generic.Dictionary<string,object>();
+   var shader=mat==null?"Standard":mat.shader.name; shaders.Add(shader);
+   if(mat!=null) for(int i=0;i<ShaderUtil.GetPropertyCount(mat.shader);i++) {
+    var name=ShaderUtil.GetPropertyName(mat.shader,i); var kind=ShaderUtil.GetPropertyType(mat.shader,i);
+    if(kind==ShaderUtil.ShaderPropertyType.Color){var c=mat.GetColor(name);colors[name]=new[]{c.r,c.g,c.b,c.a};}
+    else if(kind==ShaderUtil.ShaderPropertyType.Vector){var v=mat.GetVector(name);colors[name]=new[]{v.x,v.y,v.z,v.w};}
+    else if(kind==ShaderUtil.ShaderPropertyType.Float||kind==ShaderUtil.ShaderPropertyType.Range) floats[name]=mat.GetFloat(name);
+    else if(kind==ShaderUtil.ShaderPropertyType.TexEnv) {
+     var tex=mat.GetTexture(name) as Texture2D; if(tex==null) continue;
+     string filename;
+     if(!textureNames.TryGetValue(tex.GetInstanceID(),out filename)) {
+      filename="texture-"+textureNames.Count+".png";textureNames.Add(tex.GetInstanceID(),filename);
+      var rt=RenderTexture.GetTemporary(tex.width,tex.height,0,RenderTextureFormat.ARGB32,RenderTextureReadWrite.sRGB);
+      var previous=RenderTexture.active;Texture2D copy=null;
+      try {Graphics.Blit(tex,rt);RenderTexture.active=rt;copy=new Texture2D(tex.width,tex.height,TextureFormat.RGBA32,false);copy.ReadPixels(new Rect(0,0,tex.width,tex.height),0,0);copy.Apply();System.IO.File.WriteAllBytes(System.IO.Path.Combine(output,filename),copy.EncodeToPNG());}
+      finally {RenderTexture.active=previous;RenderTexture.ReleaseTemporary(rt);if(copy!=null)UnityEngine.Object.DestroyImmediate(copy);}
+     }
+     var scale=mat.GetTextureScale(name);var offset=mat.GetTextureOffset(name);
+     textures[name]=new {file=filename,scale=new[]{scale.x,scale.y},offset=new[]{offset.x,offset.y},source=AssetDatabase.GetAssetPath(tex)};
+    }
+   }
+   parts.Add(new {name=renderer.name,positions=vertices,normals=normals,uv=uv,indices=indices,material=new {name=mat==null?"default":mat.name,shader=shader,floats=floats,colors=colors,textures=textures}});
+  }
+  if(baked)UnityEngine.Object.DestroyImmediate(mesh);
+ }
+ var json=Newtonsoft.Json.JsonConvert.SerializeObject(new {type=entry.Key,source=AssetDatabase.GetAssetPath(prefab),parts=parts});
+ System.IO.File.WriteAllText(System.IO.Path.Combine(output,entry.Key+".json"),json);
+ exported.Add(entry.Key);
+ } finally {UnityEngine.Object.DestroyImmediate(instance);}
+}
+System.IO.File.WriteAllText(System.IO.Path.Combine(output,"manifest.json"),Newtonsoft.Json.JsonConvert.SerializeObject(new {types=exported,shaders=shaders,textures=textureNames.Count}));
+return new {types=exported.ToArray(),shaders=shaders.ToArray(),textures=textureNames.Count,output=output};

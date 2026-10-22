@@ -1,0 +1,1 @@
+{"types":["ground","box1x1","box2x1x2","glass","laser1x1x1","laser2x1x1","laser2x1x2","player","soldier","target","trigger","laserTrigger","portal","door","spring","slider1x1x3","slider2x1x3","boundary"],"shaders":["Standard","PuppetGo/Bright Grove","PuppetGo/Goal Beam","PuppetGo/Portal Glow","PuppetGo/Mechanism Paint","PuppetGo/Boundary Limestone"],"textures":29}

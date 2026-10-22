@@ -1,0 +1,32 @@
+import assert from 'node:assert/strict';
+import { TYPE_MAP, createScene, addEntity, parseScene, serializeScene, portalPairErrors } from '../src/level.js';
+assert.equal(TYPE_MAP.portal.movable, true);
+assert.equal(Boolean(TYPE_MAP.portal.overlay), false);
+assert.equal(TYPE_MAP.portal.size.ny, 3);
+for (const type of ['box1x1x2', 'lamp']) assert.equal(TYPE_MAP[type], undefined);
+let scene = addEntity(createScene(), 'portal', 1, 1, 0).scene;
+assert.equal(scene.entities[0].number, null);
+assert.equal(portalPairErrors(scene).length, 1);
+scene.entities[0].number = 0;
+scene = addEntity(scene, 'portal', 4, 3, 0).scene;
+scene.entities[1].number = 0;
+assert.deepEqual(portalPairErrors(scene), []);
+assert.deepEqual(parseScene(serializeScene(scene)), scene);
+scene.entities.push({ id: 'trigger', type: 'trigger', x: 2, z: 2, layer: 0, number: 0 });
+assert.deepEqual(portalPairErrors(scene), []);
+scene.entities.push({ id: 'extra', type: 'portal', x: 3, z: 2, layer: 0, number: 0 });
+assert.match(portalPairErrors(scene)[0], /3 个/);
+scene.entities.pop();
+scene.entities[1].number = 99;
+assert.equal(portalPairErrors(scene).length, 2);
+assert.equal(addEntity(scene, 'portal', 1, 1, 0).result.ok, false);
+assert.equal(addEntity(scene, 'box1x1', 1, 1, 1).result.ok, false);
+console.log('Portal pairing and scene round-trip checks passed.');
+for (const facing of ['N', 'E', 'S', 'W']) {
+  const placed = addEntity(createScene(), 'portal', 1, 1, 0, 0, facing).scene;
+  assert.equal(placed.entities[0].facing, facing);
+  const json = serializeScene(placed);
+  assert.equal(JSON.parse(json).entities[0].facing, facing);
+  assert.equal(parseScene(json).entities[0].facing, facing);
+}
+console.log('Portal placement facing survives JSON export/import in all four directions.');
